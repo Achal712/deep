@@ -2,19 +2,28 @@ import streamlit as st
 import cv2
 import numpy as np
 import tensorflow as tf
-from tempfile import NamedTemporaryFile
+import tempfile
+import io
 from PIL import Image
 
 # Constants
 img_size = 128  
 frames_per_video = 25  
 
-# Load Model
-model = tf.keras.models.load_model('deepfake_detection_model.h5')
+# Load Model Efficiently (Cache to avoid reloading)
+@st.cache_resource
+def load_model():
+    return tf.keras.models.load_model('deepfake_detection_model.h5')
 
-def extract_frames(video_path, max_frames):
+model = load_model()
+
+def extract_frames(video_bytes, max_frames):
     frames = []
-    cap = cv2.VideoCapture(video_path)
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    temp_file.write(video_bytes.getvalue())
+    temp_file_path = temp_file.name
+    
+    cap = cv2.VideoCapture(temp_file_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_skip = max(1, total_frames // max_frames)
 
@@ -29,11 +38,11 @@ def extract_frames(video_path, max_frames):
     cap.release()
     return frames
 
-def predict_video(video_path):
-    frames = extract_frames(video_path, frames_per_video)
+def predict_video(video_bytes):
+    frames = extract_frames(video_bytes, frames_per_video)
     if len(frames) == 0:
         return None, None
-    frames = np.array(frames) / 255.0 
+    frames = np.array(frames) / 255.0  
     predictions = model.predict(frames)
     
     avg_prediction = np.mean(predictions, axis=0)
@@ -61,14 +70,10 @@ if uploaded_file is not None:
     file_type = uploaded_file.type.split('/')[0]
     
     if file_type == "video":
-        with NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
-            temp_video.write(uploaded_file.read())
-            temp_video_path = temp_video.name
-        
-        st.video(temp_video_path)
+        st.video(uploaded_file)
         st.write("Processing video...")
-        
-        final_prediction, avg_prediction = predict_video(temp_video_path)
+
+        final_prediction, avg_prediction = predict_video(uploaded_file)
         
     elif file_type == "image":
         image = Image.open(uploaded_file)
